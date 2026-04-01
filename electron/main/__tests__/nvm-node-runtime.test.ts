@@ -84,6 +84,7 @@ describe('detectNvmWindowsDir', () => {
           APPDATA: 'C:\\Users\\Jason\\AppData\\Roaming',
         },
         access: async () => undefined,
+        pathModule: path.win32,
       })
     ).resolves.toBe('C:\\Users\\Jason\\AppData\\Roaming\\nvm')
   })
@@ -98,6 +99,7 @@ describe('detectNvmWindowsDir', () => {
         access: async () => {
           throw new Error('ENOENT')
         },
+        pathModule: path.win32,
       })
     ).resolves.toBeNull()
   })
@@ -118,6 +120,7 @@ describe('listInstalledNvmWindowsNodeExePaths', () => {
           { name: 'v24.0.0', isDirectory: () => true },
           { name: 'settings.txt', isDirectory: () => false },
         ],
+        pathModule: path.win32,
       }
     )
 
@@ -135,6 +138,7 @@ describe('listInstalledNvmWindowsNodeExePaths', () => {
         readdir: async () => {
           throw new Error('ENOENT')
         },
+        pathModule: path.win32,
       }
     )
 
