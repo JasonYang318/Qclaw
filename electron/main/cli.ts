@@ -31,7 +31,9 @@ import {
   buildNvmInstallCommand,
   buildNvmNodeBinDir,
   buildNvmUseCommand,
+  detectNvmWindowsDir,
   listInstalledNvmNodeBinDirs,
+  listInstalledNvmWindowsNodeExePaths,
 } from './nvm-node-runtime'
 import {
   resolveNodeInstallStrategy,
@@ -1330,15 +1332,20 @@ export async function checkNode(): Promise<NodeCheckResult> {
   const requiredVersion = installPlan?.requiredVersion || requirement.minVersion
   const targetVersion = installPlan?.version || ''
   const nvmDir = !isWin ? await detectNvmDir() : null
+  const nvmWindowsDir = isWin ? await detectNvmWindowsDir().catch(() => null) : null
+  const effectiveNvmDir = nvmWindowsDir ?? nvmDir
 
-  // 先尝试当前 shell / 已知候选目录中的 node
   const shellNode = await resolveNodeFromShell()
-  const nvmNode = nvmDir ? await resolveNodeFromInstalledNvmVersions(nvmDir, targetVersion) : null
+  const nvmNode = nvmDir
+    ? await resolveNodeFromInstalledNvmVersions(nvmDir, targetVersion)
+    : nvmWindowsDir
+      ? await resolveNodeFromInstalledNvmWindowsVersions(nvmWindowsDir, targetVersion)
+      : null
   const preferredNode = selectPreferredNodeRuntime({
     shellNode,
     nvmNode,
     requiredVersion,
-    nvmDir,
+    nvmDir: effectiveNvmDir,
   })
 
   if (preferredNode) {
@@ -1352,11 +1359,9 @@ export async function checkNode(): Promise<NodeCheckResult> {
     )
   }
 
-  // 再按统一发现策略遍历 PATH / manager env / 常见目录中的 node 可执行文件
   for (const nodePath of listNodeExecutableCandidates(process.platform, process.env.PATH || '', detectedNodeBinDir)) {
     const r = await runDirect(nodePath, ['--version'], MAIN_RUNTIME_POLICY.cli.lightweightProbeTimeoutMs, 'env-setup')
     if (r.ok) {
-      // 记住这个 bin 目录，后续 npm 也在这里
       const nodeBinDir = dirname(nodePath)
       detectedNodeBinDir = nodeBinDir
       return buildNodeCheckResult(
@@ -1364,12 +1369,12 @@ export async function checkNode(): Promise<NodeCheckResult> {
         true,
         requiredVersion,
         targetVersion,
-        resolveNodeInstallStrategy(nodeBinDir, nvmDir)
+        resolveNodeInstallStrategy(nodeBinDir, effectiveNvmDir)
       )
     }
   }
 
-  return buildNodeCheckResult('', false, requiredVersion, targetVersion, nvmDir ? 'nvm' : 'installer')
+  return buildNodeCheckResult('', false, requiredVersion, targetVersion, effectiveNvmDir ? 'nvm' : 'installer')
 }
 
 // ─── Node.js Auto Install ───
@@ -1446,6 +1451,41 @@ async function resolveNodeFromInstalledNvmVersions(
     )
     if (!versionResult.ok) continue
 
+    detectedNodeBinDir = binDir
+    return {
+      version: versionResult.stdout.trim(),
+      binDir,
+    }
+  }
+
+  return null
+}
+
+async function resolveNodeFromInstalledNvmWindowsVersions(
+  nvmWindowsDir: string,
+  preferredVersion?: string | null
+): Promise<{ version: string; binDir: string | null } | null> {
+  const candidateExePaths = Array.from(
+    new Set(
+      [
+        preferredVersion
+          ? join(nvmWindowsDir, `v${preferredVersion.replace(/^v/, '')}`, 'node.exe')
+          : '',
+        ...(await listInstalledNvmWindowsNodeExePaths(nvmWindowsDir).catch(() => [])),
+      ].filter(Boolean)
+    )
+  )
+
+  for (const exePath of candidateExePaths) {
+    const versionResult = await runDirect(
+      exePath,
+      ['--version'],
+      MAIN_RUNTIME_POLICY.cli.lightweightProbeTimeoutMs,
+      'env-setup'
+    )
+    if (!versionResult.ok) continue
+
+    const binDir = dirname(exePath)
     detectedNodeBinDir = binDir
     return {
       version: versionResult.stdout.trim(),
